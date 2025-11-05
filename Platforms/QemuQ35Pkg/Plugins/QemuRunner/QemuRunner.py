@@ -12,6 +12,8 @@ import datetime
 import re
 import io
 import shutil
+import struct
+import uuid
 from pathlib import Path
 from edk2toolext.environment.plugintypes import uefi_helper_plugin
 from edk2toollib import utility_functions
@@ -45,6 +47,116 @@ class QemuRunner(uefi_helper_plugin.IUefiHelperPlugin):
 
         return ver_str.split('.')
 
+    @staticmethod
+    def setup_smbios(code_fd, repo_version, qemu_version, boot_selection):
+
+        creation_time = Path(code_fd).stat().st_ctime
+        creation_datetime = datetime.datetime.fromtimestamp(creation_time)
+        creation_date = creation_datetime.strftime("%m/%d/%Y")
+
+        smbios_args = ""
+        smbios_args += f" -smbios type=0,vendor=\"Patina\",version=\"patina-q35-{repo_version}\",date={creation_date},uefi=on"
+        smbios_args += f" -smbios type=1,manufacturer=OpenDevicePartnership,product=\"QEMU Q35\",family=QEMU,version=\"{'.'.join(qemu_version)}\",serial=42-42-42-42,uuid=99fb60e2-181c-413a-a3cf-0a5fea8d87b0"
+        smbios_args += f" -smbios type=3,manufacturer=OpenDevicePartnership,serial=40-41-42-45{boot_selection}"
+        
+        return smbios_args
+
+        # Helper functions
+        def encode_string(s):
+            return s.encode('ascii') + b'\x00'
+
+        # SMBIOS structures
+        smbios_structures = []
+
+        # Type 0: BIOS Information
+        bios_info = struct.pack(
+            "<BBHBBBBBB",
+            0,      # Type
+            0x12,   # Length
+            0x0000, # Handle
+            1,      # Vendor string index
+            2,      # BIOS Version string index
+            0xE9,   # BIOS Starting Address Segment
+            3,      # BIOS Release Date string index
+            0x80,   # BIOS Characteristics
+            0       # Extension Bytes
+        )
+        strings_0 = (
+            encode_string("Patina") +
+            encode_string(f"patina-q35-{repo_version}") +
+            encode_string(creation_date) +
+            b'\x00'
+        )
+        smbios_structures.append(bios_info + strings_0)
+
+        # Type 1: System Information
+        uuid_bytes = uuid.UUID("99fb60e2-181c-413a-a3cf-0a5fea8d87b0").bytes
+        system_info = struct.pack(
+            "<BBHBBBB16sBB",
+            1,      # Type
+            0x1B,   # Length
+            0x0001, # Handle
+            1,      # Manufacturer string index
+            2,      # Product Name string index
+            3,      # Version string index
+            4,      # Serial Number string index
+            uuid_bytes,
+            5,      # Wake-up Type
+            6       # SKU Number string index
+        )
+        strings_1 = (
+            encode_string("OpenDevicePartnership") +
+            encode_string("QEMU Q35") +
+            encode_string(".".join(qemu_version)) +
+            encode_string("42-42-42-42") +
+            encode_string("QEMU") +
+            encode_string("") +
+            b'\x00'
+        )
+        smbios_structures.append(system_info + strings_1)
+
+        # Type 3: System Enclosure
+        enclosure_info = struct.pack(
+            "<BBHBB",
+            3,      # Type
+            0x09,   # Length
+            0x0002, # Handle
+            1,      # Manufacturer string index
+            2       # Serial Number string index
+        )
+        strings_3 = (
+            encode_string("OpenDevicePartnership") +
+            encode_string("40-41-42-43") +
+            b'\x00'
+        )
+        smbios_structures.append(enclosure_info + strings_3)
+
+        # Combine all structures
+        smbios_table = b''.join(smbios_structures)
+        table_address = 0x000F1000
+
+        # SMBIOS 3.x Entry Point Structure
+        entry_point = bytearray(24)
+        entry_point[0:5] = b'_SM3_'
+        entry_point[5] = 0  # Checksum placeholder
+        entry_point[6] = 24
+        entry_point[7] = 3   # Major Version
+        entry_point[8] = 9   # Minor Version
+        entry_point[9] = 0   # DocRev
+        entry_point[10] = 1  # Entry Point Revision
+        entry_point[11] = 0  # Reserved
+        entry_point[12:20] = struct.pack('<Q', len(smbios_table))
+        entry_point[20:28] = struct.pack('<Q', table_address)
+        entry_point[5] = (256 - sum(entry_point) % 256) % 256
+
+        # Final binary
+        final_binary = entry_point + smbios_table
+
+        # Save to file
+        with open("smbios_3_9.bin", "wb") as f:
+            f.write(final_binary)
+
+        print("SMBIOS 3.9 binary file generated as smbios_3_9.bin")
 
     @staticmethod
     def Runner(env):
@@ -53,6 +165,7 @@ class QemuRunner(uefi_helper_plugin.IUefiHelperPlugin):
         OutputPath_FV = os.path.join(env.GetValue("BUILD_OUTPUT_BASE"), "FV")
         shutdown_after_run = (env.GetValue("SHUTDOWN_AFTER_RUN", "FALSE")=="TRUE")
         repo_version = env.GetValue("VERSION", "Unknown")
+        smbios_table_file = os.path.join(env.GetValue("BUILD_OUTPUT_BASE"), "FV", "smbios_table.bin")
 
         # Use a provided QEMU path. Otherwise use what is provided through the extdep
         executable = env.GetValue("QEMU_PATH", None)
@@ -196,13 +309,7 @@ class QemuRunner(uefi_helper_plugin.IUefiHelperPlugin):
         else:
             args += " -net none"
 
-        creation_time = Path(code_fd).stat().st_ctime
-        creation_datetime = datetime.datetime.fromtimestamp(creation_time)
-        creation_date = creation_datetime.strftime("%m/%d/%Y")
-
-        args += f" -smbios type=0,vendor=\"Patina\",version=\"patina-q35-{repo_version}\",date={creation_date},uefi=on"
-        args += f" -smbios type=1,manufacturer=OpenDevicePartnership,product=\"QEMU Q35\",family=QEMU,version=\"{'.'.join(qemu_version)}\",serial=42-42-42-42,uuid=99fb60e2-181c-413a-a3cf-0a5fea8d87b0"
-        args += f" -smbios type=3,manufacturer=OpenDevicePartnership,serial=40-41-42-43{boot_selection}"
+        args += QemuRunner.setup_smbios(code_fd, repo_version, qemu_version, boot_selection)
 
         # TPM in Linux
         tpm_dev = env.GetValue("TPM_DEV")
