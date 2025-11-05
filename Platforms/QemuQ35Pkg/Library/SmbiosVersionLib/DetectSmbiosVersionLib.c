@@ -33,35 +33,12 @@ DetectSmbiosVersion (
   FIRMWARE_CONFIG_ITEM  Anchor, Tables;
   UINTN                 AnchorSize, TablesSize;
   QEMU_SMBIOS_ANCHOR    QemuAnchor;
-  UINT16                SmbiosVersion;
-  RETURN_STATUS         PcdStatus;
 
-  if (PcdGetBool (PcdQemuSmbiosValidated)) {
-    //
-    // Some other module, linked against this library, has already performed
-    // the task at hand. This should never happen, but it's easy to handle;
-    // just exit early.
-    //
-    return RETURN_SUCCESS;
-  }
-
-  if (RETURN_ERROR (
-        QemuFwCfgFindFile (
-          "etc/smbios/smbios-anchor",
-          &Anchor,
-          &AnchorSize
-          )
-        ) ||
-      RETURN_ERROR (
-        QemuFwCfgFindFile (
-          "etc/smbios/smbios-tables",
-          &Tables,
-          &TablesSize
-          )
-        ) ||
+  if (RETURN_ERROR (QemuFwCfgFindFile ("etc/smbios/smbios-anchor", &Anchor, &AnchorSize)) ||
+      RETURN_ERROR (QemuFwCfgFindFile ("etc/smbios/smbios-tables", &Tables, &TablesSize)) ||
       (TablesSize == 0))
   {
-    return RETURN_SUCCESS;
+      ASSERT (FALSE);
   }
 
   QemuFwCfgSelectItem (Anchor);
@@ -70,59 +47,28 @@ DetectSmbiosVersion (
     case sizeof QemuAnchor.V2:
       QemuFwCfgReadBytes (AnchorSize, &QemuAnchor);
 
-      if ((QemuAnchor.V2.MajorVersion != 2) ||
-          (QemuAnchor.V2.TableLength != TablesSize) ||
-          (CompareMem (QemuAnchor.V2.AnchorString, "_SM_", 4) != 0) ||
-          (CompareMem (QemuAnchor.V2.IntermediateAnchorString, "_DMI_", 5) != 0))
-      {
-        return RETURN_SUCCESS;
-      }
+      DEBUG ((DEBUG_INFO, "QemuAnchor.V2.MajorVersion : %d\n", QemuAnchor.V2.MajorVersion));
+      DEBUG ((DEBUG_INFO, "QemuAnchor.V2.MinorVersion : %d\n", QemuAnchor.V2.MinorVersion));
+      DEBUG ((DEBUG_INFO, "QemuAnchor.V2.TableLength : %d\n", QemuAnchor.V2.TableLength));
+      PcdSet16S (PcdSmbiosVersion, (UINT16)(QemuAnchor.V2.MajorVersion << 8 | QemuAnchor.V2.MinorVersion));
 
-      SmbiosVersion = (UINT16)(QemuAnchor.V2.MajorVersion << 8 |
-                               QemuAnchor.V2.MinorVersion);
       break;
 
     case sizeof QemuAnchor.V3:
       QemuFwCfgReadBytes (AnchorSize, &QemuAnchor);
 
-      if ((QemuAnchor.V3.MajorVersion != 3) ||
-          (QemuAnchor.V3.TableMaximumSize != TablesSize) ||
-          (CompareMem (QemuAnchor.V3.AnchorString, "_SM3_", 5) != 0))
-      {
-        return RETURN_SUCCESS;
-      }
+      DEBUG ((DEBUG_INFO, "QemuAnchor.V3.MajorVersion : %d\n", QemuAnchor.V3.MajorVersion));
+      DEBUG ((DEBUG_INFO, "QemuAnchor.V3.MinorVersion : %d\n", QemuAnchor.V3.MinorVersion));
+      DEBUG ((DEBUG_INFO, "QemuAnchor.V3.TableMaximumSize : %d\n", QemuAnchor.V3.TableMaximumSize));
+      PcdSet16S (PcdSmbiosVersion, (UINT16)(QemuAnchor.V3.MajorVersion << 8 | QemuAnchor.V3.MinorVersion));
+      PcdSet8S (PcdSmbiosDocRev, QemuAnchor.V3.DocRev);
 
-      SmbiosVersion = (UINT16)(QemuAnchor.V3.MajorVersion << 8 |
-                               QemuAnchor.V3.MinorVersion);
-
-      DEBUG ((
-        DEBUG_INFO,
-        "%a: SMBIOS 3.x DocRev from QEMU: 0x%02x\n",
-        __FUNCTION__,
-        QemuAnchor.V3.DocRev
-        ));
-      PcdStatus = PcdSet8S (PcdSmbiosDocRev, QemuAnchor.V3.DocRev);
-      ASSERT_RETURN_ERROR (PcdStatus);
       break;
 
     default:
-      return RETURN_SUCCESS;
+      ASSERT (FALSE);
   }
 
-  DEBUG ((
-    DEBUG_INFO,
-    "%a: SMBIOS version from QEMU: 0x%04x\n",
-    __FUNCTION__,
-    SmbiosVersion
-    ));
-  PcdStatus = PcdSet16S (PcdSmbiosVersion, SmbiosVersion);
-  ASSERT_RETURN_ERROR (PcdStatus);
-
-  //
-  // SMBIOS platform drivers can now fetch and install
-  // "etc/smbios/smbios-tables" from QEMU.
-  //
-  PcdStatus = PcdSetBoolS (PcdQemuSmbiosValidated, TRUE);
-  ASSERT_RETURN_ERROR (PcdStatus);
+  PcdSetBoolS (PcdQemuSmbiosValidated, TRUE);
   return RETURN_SUCCESS;
 }
