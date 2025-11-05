@@ -54,13 +54,6 @@ class QemuRunner(uefi_helper_plugin.IUefiHelperPlugin):
         creation_datetime = datetime.datetime.fromtimestamp(creation_time)
         creation_date = creation_datetime.strftime("%m/%d/%Y")
 
-        smbios_args = ""
-        smbios_args += f" -smbios type=0,vendor=\"Patina\",version=\"patina-q35-{repo_version}\",date={creation_date},uefi=on"
-        smbios_args += f" -smbios type=1,manufacturer=OpenDevicePartnership,product=\"QEMU Q35\",family=QEMU,version=\"{'.'.join(qemu_version)}\",serial=42-42-42-42,uuid=99fb60e2-181c-413a-a3cf-0a5fea8d87b0"
-        smbios_args += f" -smbios type=3,manufacturer=OpenDevicePartnership,serial=40-41-42-45{boot_selection}"
-        
-        return smbios_args
-
         # Helper functions
         def encode_string(s):
             return s.encode('ascii') + b'\x00'
@@ -138,8 +131,8 @@ class QemuRunner(uefi_helper_plugin.IUefiHelperPlugin):
         # SMBIOS 3.x Entry Point Structure
         entry_point = bytearray(24)
         entry_point[0:5] = b'_SM3_'
-        entry_point[5] = 0  # Checksum placeholder
-        entry_point[6] = 24
+        entry_point[5] = 0   # Checksum placeholder
+        entry_point[6] = 24  # Length
         entry_point[7] = 3   # Major Version
         entry_point[8] = 9   # Minor Version
         entry_point[9] = 0   # DocRev
@@ -150,13 +143,7 @@ class QemuRunner(uefi_helper_plugin.IUefiHelperPlugin):
         entry_point[5] = (256 - sum(entry_point) % 256) % 256
 
         # Final binary
-        final_binary = entry_point + smbios_table
-
-        # Save to file
-        with open("smbios_3_9.bin", "wb") as f:
-            f.write(final_binary)
-
-        print("SMBIOS 3.9 binary file generated as smbios_3_9.bin")
+        return entry_point + smbios_table
 
     @staticmethod
     def Runner(env):
@@ -165,7 +152,7 @@ class QemuRunner(uefi_helper_plugin.IUefiHelperPlugin):
         OutputPath_FV = os.path.join(env.GetValue("BUILD_OUTPUT_BASE"), "FV")
         shutdown_after_run = (env.GetValue("SHUTDOWN_AFTER_RUN", "FALSE")=="TRUE")
         repo_version = env.GetValue("VERSION", "Unknown")
-        smbios_table_file = os.path.join(env.GetValue("BUILD_OUTPUT_BASE"), "FV", "smbios_table.bin")
+        smbios_file_path = os.path.join(env.GetValue("BUILD_OUTPUT_BASE"), "FV", "smbios_table.bin")
 
         # Use a provided QEMU path. Otherwise use what is provided through the extdep
         executable = env.GetValue("QEMU_PATH", None)
@@ -309,7 +296,11 @@ class QemuRunner(uefi_helper_plugin.IUefiHelperPlugin):
         else:
             args += " -net none"
 
-        args += QemuRunner.setup_smbios(code_fd, repo_version, qemu_version, boot_selection)
+        # Setup SMBIOS
+        smbios_file_data = QemuRunner.setup_smbios(code_fd, repo_version, qemu_version, boot_selection)
+        with open(smbios_file_path, "wb") as f:
+            f.write(smbios_file_data)
+        args += f" -smbios file={smbios_file_path}"
 
         # TPM in Linux
         tpm_dev = env.GetValue("TPM_DEV")
