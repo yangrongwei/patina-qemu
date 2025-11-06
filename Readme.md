@@ -263,11 +263,11 @@ FILE DXE_CORE = 23C9322F-2AF2-476A-BC4C-26BC88266C71 {
 }
 ```
 
-This repository's platform FDF files do support defining a build variable to override the default binary without needing
+This repository's platform FDF files support defining a build variable to override the default binary without needing
 to modify the FDF file.  This can be set from the stuart_build command line by defining `BLD_*_DXE_CORE_BINARY_OVERRIDE':
 
 ```cmd
-stuart_build -c Platforms\QemuQ35Pkg\PlatformBuild.py --flashonly BLD_*_DXE_CORE_BINARY_OVERRIDE="<new dxe core file path>"
+stuart_build -c Platforms\QemuQ35Pkg\PlatformBuild.py --FLASHROM BLD_*_DXE_CORE_BINARY_OVERRIDE="<new dxe core file path>"
 ```
 
 #### Patching a Pre-Built UEFI Firmware Device Image
